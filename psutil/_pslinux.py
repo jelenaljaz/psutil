@@ -329,7 +329,7 @@ def boot_time():
                 ret = float(line.strip().split()[1])
                 BOOT_TIME = ret
                 return ret
-        raise RuntimeError("line 'btime' not found")
+        raise RuntimeError("line 'btime' not found in /proc/stat")
 
 
 # --- processes
@@ -1044,25 +1044,35 @@ class Process(object):
 
         @wrap_exceptions
         def ionice_set(self, ioclass, value):
+            if value is not None:
+                if not PY3 and not isinstance(value, (int, long)):
+                    msg = "value argument is not an integer (gor %r)" % value
+                    raise TypeError(msg)
+                if not 0 <= value <= 8:
+                    raise ValueError(
+                        "value argument range expected is between 0 and 8")
+
             if ioclass in (IOPRIO_CLASS_NONE, None):
                 if value:
-                    msg = "can't specify value with IOPRIO_CLASS_NONE"
+                    msg = "can't specify value with IOPRIO_CLASS_NONE " \
+                          "(got %r)" % value
                     raise ValueError(msg)
                 ioclass = IOPRIO_CLASS_NONE
                 value = 0
-            if ioclass in (IOPRIO_CLASS_RT, IOPRIO_CLASS_BE):
-                if value is None:
-                    value = 4
             elif ioclass == IOPRIO_CLASS_IDLE:
                 if value:
-                    msg = "can't specify value with IOPRIO_CLASS_IDLE"
+                    msg = "can't specify value with IOPRIO_CLASS_IDLE " \
+                          "(got %r)" % value
                     raise ValueError(msg)
                 value = 0
+            elif ioclass in (IOPRIO_CLASS_RT, IOPRIO_CLASS_BE):
+                if value is None:
+                    # TODO: add comment explaining why this is 4 (?)
+                    value = 4
             else:
-                value = 0
-            if not 0 <= value <= 8:
-                raise ValueError(
-                    "value argument range expected is between 0 and 8")
+                # otherwise we would get OSError(EVINAL)
+                raise ValueError("invalid ioclass argument %r" % ioclass)
+
             return cext.proc_ioprio_set(self.pid, ioclass, value)
 
     if HAS_PRLIMIT:
@@ -1148,27 +1158,30 @@ class Process(object):
 
     @wrap_exceptions
     def ppid(self):
-        with open("/proc/%s/status" % self.pid, 'rb') as f:
+        fpath = "/proc/%s/status" % self.pid
+        with open(fpath, 'rb') as f:
             for line in f:
                 if line.startswith(b"PPid:"):
                     # PPid: nnnn
                     return int(line.split()[1])
-            raise NotImplementedError("line not found")
+            raise NotImplementedError("line 'PPid' not found in %s" % fpath)
 
     @wrap_exceptions
     def uids(self):
-        with open("/proc/%s/status" % self.pid, 'rb') as f:
+        fpath = "/proc/%s/status" % self.pid
+        with open(fpath, 'rb') as f:
             for line in f:
                 if line.startswith(b'Uid:'):
                     _, real, effective, saved, fs = line.split()
                     return _common.puids(int(real), int(effective), int(saved))
-            raise NotImplementedError("line not found")
+            raise NotImplementedError("line 'Uid' not found in %s" % fpath)
 
     @wrap_exceptions
     def gids(self):
-        with open("/proc/%s/status" % self.pid, 'rb') as f:
+        fpath = "/proc/%s/status" % self.pid
+        with open(fpath, 'rb') as f:
             for line in f:
                 if line.startswith(b'Gid:'):
                     _, real, effective, saved, fs = line.split()
                     return _common.pgids(int(real), int(effective), int(saved))
-            raise NotImplementedError("line not found")
+            raise NotImplementedError("line 'Gid' not found in %s" % fpath)
